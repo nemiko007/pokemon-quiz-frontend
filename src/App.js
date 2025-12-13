@@ -84,7 +84,11 @@ function App() {
   const authContextValue = { ...auth, api, login, register, logout };
 
   if (auth.isLoading) {
-    return <div className="loading-fullscreen">Loading...</div>;
+    return (
+      <div className="loading-fullscreen">
+        <p>サーバーを起動しています...</p>
+      </div>
+    );
   }
 
   return (
