@@ -1,25 +1,522 @@
-import logo from './logo.svg';
+import React, { useState, useEffect, createContext, useContext, useMemo } from 'react';
+import {
+  BrowserRouter as Router,
+  Routes,
+  Route,
+  Navigate,
+  useNavigate,
+} from 'react-router-dom';
+import axios from 'axios';
 import './App.css';
+import {
+  Chart as ChartJS,
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip,
+} from 'chart.js';
+import { Radar } from 'react-chartjs-2';
+
+ChartJS.register(
+  RadialLinearScale,
+  PointElement,
+  LineElement,
+  Filler,
+  Tooltip
+);
+
+// バックエンドAPIのURL
+const API_URL = 'http://localhost:8080';
+
+// 認証コンテキスト
+const AuthContext = createContext(null);
 
 function App() {
+  const [auth, setAuth] = useState({ token: localStorage.getItem('token'), user: null, isLoading: true });
+
+  const api = useMemo(() => {
+    const instance = axios.create({
+      baseURL: API_URL,
+    });
+    instance.interceptors.request.use(config => {
+      if (auth.token) {
+        config.headers.Authorization = `Bearer ${auth.token}`;
+      }
+      return config;
+    });
+    return instance;
+  }, [auth.token]);
+
+  useEffect(() => {
+    const fetchUser = async () => {
+      if (auth.token) {
+        try {
+          const res = await api.get('/me');
+          setAuth(prev => ({ ...prev, user: res.data, isLoading: false }));
+        } catch {
+          // トークンが無効な場合
+          localStorage.removeItem('token');
+          setAuth({ token: null, user: null, isLoading: false });
+        }
+      } else {
+        setAuth(prev => ({ ...prev, isLoading: false }));
+      }
+    };
+    fetchUser();
+  }, [auth.token, api]);
+
+  const login = async (username, password) => {
+    const res = await axios.post(`${API_URL}/login`, { username, password });
+    localStorage.setItem('token', res.data.token);
+    setAuth(prev => ({ ...prev, token: res.data.token }));
+  };
+
+  const register = async (username, password) => {
+    await axios.post(`${API_URL}/register`, { username, password });
+  };
+
+  const logout = () => {
+    localStorage.removeItem('token');
+    setAuth({ token: null, user: null, isLoading: false });
+  };
+
+  const authContextValue = { ...auth, api, login, register, logout };
+
+  if (auth.isLoading) {
+    return <div className="loading-fullscreen">Loading...</div>;
+  }
+
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <AuthContext.Provider value={authContextValue}>
+      <Router>
+        <div className="App">
+          <AppHeader />
+          <main className="quiz-container">
+            <Routes>
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/register" element={<RegisterPage />} />
+              <Route path="/quiz" element={<PrivateRoute><QuizPage /></PrivateRoute>} />
+              <Route path="*" element={<Navigate to={auth.token ? "/quiz" : "/login"} />} />
+            </Routes>
+          </main>
+        </div>
+      </Router>
+    </AuthContext.Provider>
+  );
+}
+
+function QuizPage() {
+  const { api } = useContext(AuthContext);
+  // --- Stateの定義 ---
+  const [quiz, setQuiz] = useState(null); // クイズデータ (id, stats, options)
+  const [isLoading, setIsLoading] = useState(true); // ローディング状態
+  const [error, setError] = useState(''); // エラーメッセージ
+  const [result, setResult] = useState(null); // 答え合わせの結果
+  const [selectedRegion, setSelectedRegion] = useState(null);
+  const [retryMode, setRetryMode] = useState(false); // 間違えた問題オプション
+
+  // スコア管理用のState
+  const [score, setScore] = useState(0);
+  const [questionCount, setQuestionCount] = useState(0);
+  const [showScoreModal, setShowScoreModal] = useState(false);
+  const [userStats, setUserStats] = useState(null);
+  const [retryQuizList, setRetryQuizList] = useState([]); // 再挑戦モード用の問題リスト
+
+  // --- 関数の定義 ---
+
+  // 新しいクイズを取得する非同期関数
+  const fetchQuiz = async (region, retry) => {
+    if (!region) return;
+    setIsLoading(true);
+    setError('');
+    setResult(null);
+    try {
+      let response;
+      if (retry && retryQuizList.length > 0) {
+        // 再挑戦リストから次の問題を取得
+        const nextPokemonId = retryQuizList[0];
+        // この実装ではAPIを叩いていますが、初回に全ポケモン情報を取得してフロントで完結させる方法もあります
+        response = await api.get(`/quiz?region=${region}&retry=true&pokemonId=${nextPokemonId}`);
+      } else {
+        // 通常のクイズ取得
+        response = await api.get(`/quiz?region=${region}&retry=${retry}`);
+      }
+      setQuiz(response.data);
+    } catch (err) {
+      setError('クイズの読み込みに失敗しました。サーバーが起動しているか確認してください。');
+      console.error(err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 選択肢がクリックされたときの処理
+  const handleOptionClick = async (selectedName) => {
+    if (result) return; // すでに回答済みの場合は何もしない
+
+    try {
+      const response = await api.post(`/answer`, {
+        id: quiz.id,
+        name: selectedName,
+      });
+      setResult(response.data); // 結果をStateに保存
+
+      if (response.data.isCorrect) {
+        setScore(prevScore => prevScore + 1);
+        if (retryMode) {
+          // 正解したら再挑戦リストから削除
+          setRetryQuizList(prevList => prevList.filter(id => id !== quiz.id));
+        }
+      }
+      setQuestionCount(prevCount => prevCount + 1);
+
+    } catch (err) {
+      setError('答え合わせに失敗しました。');
+      console.error(err);
+    }
+  };
+
+  // 「次の問題へ」ボタンが押されたときの処理
+  const handleNextQuiz = () => {
+    fetchQuiz(selectedRegion, retryMode);
+  };
+
+  // 「間違えた問題」モードで全問正解したかチェックする
+  useEffect(() => {
+    // retryModeがtrueで、userStatsが読み込まれ、かつretryQuizListが空になったらモード選択に戻る
+    // questionCount > 0 を条件に加えることで、初期表示時に発火するのを防ぐ
+    if (retryMode && userStats && questionCount > 0 && retryQuizList.length === 0) {
+      alert('おめでとうございます！間違えた問題をすべてクリアしました！');
+      handleCloseModal();
+    }
+  }, [userStats, retryMode]);
+
+  // スコアモーダルを閉じる処理
+  const handleCloseModal = () => {
+    setShowScoreModal(false);
+    setScore(0);
+    setQuestionCount(0);
+    // 地方選択に戻る
+    setSelectedRegion(null); 
+    setQuiz(null);
+  }
+
+  // 地方が選択されたときの処理
+  const handleRegionSelect = (region, retry) => {
+    setSelectedRegion(region);
+    setRetryMode(retry);
+    if (retry && userStats) {
+      // 間違えた問題のIDリストをシャッフルしてセット
+      const wrongIds = JSON.parse(userStats.WrongAnswers);
+      setRetryQuizList(wrongIds.sort(() => Math.random() - 0.5));
+    }
+    fetchQuiz(region, retry);
+  }
+
+  // --- useEffect ---
+
+  // ユーザー統計情報を取得
+  useEffect(() => {
+    const getStats = async () => {
+      const res = await api.get('/stats');
+      setUserStats(res.data);
+    };
+    getStats();
+  }, [questionCount, api]);
+
+  // コンポーネントが最初にマウントされたときにクイズを取得する
+  useEffect(() => {
+    // 地方が選択されたらクイズを取得するロジックに変更したため、ここは空でOK
+  }, []); 
+
+  // 10問ごとに正答率を表示する
+  useEffect(() => {
+    if (questionCount > 0 && questionCount % 10 === 0) {
+      setShowScoreModal(true);
+    }
+  }, [questionCount]);
+
+  // --- レンダリング ---
+
+  return (
+    !selectedRegion ? (
+      <RegionSelector onSelect={handleRegionSelect} stats={userStats} />
+    ) : (
+      <>
+      <div className="quiz-header">
+        <p className="question-counter">{retryMode ? `残り ${retryQuizList.length} 問` : `${questionCount + 1} 問目`}</p>
+        <button onClick={handleCloseModal} className="interrupt-button">中断して戻る</button>
+      </div>
+
+      {showScoreModal && (
+        <ScoreModal 
+          score={score} 
+          questionCount={questionCount} 
+          onClose={handleCloseModal} 
+        />
+      )}
+
+      {isLoading && <p>クイズを読み込み中...</p>}
+      {error && <p className="error-message">{error}</p>}
+      
+      {!isLoading && !error && quiz && !showScoreModal && (
+        <>
+          {/* 種族値グラフ表示エリア */}
+          <StatsRadarChart stats={quiz.stats} />
+
+          {/* 結果表示エリア */}
+          {result && (
+            <div className="result-area">
+              {result.isCorrect ? (
+                <p className="result-correct">🎉 正解！ 🎉</p>
+              ) : (
+                <p className="result-incorrect">
+                  残念！ 正解は...
+                </p>
+              )}
+              <h3>{result.correctPokemon.name}</h3>
+              <img 
+                src={result.correctPokemon.imageUrl} 
+                alt={result.correctPokemon.name} 
+                className="pokemon-image"
+              />
+              <button onClick={handleNextQuiz} className="next-button">次の問題へ</button>
+            </div>
+          )}
+
+          {/* 選択肢エリア (結果が表示されていないときだけ表示) */}
+          {!result && (
+            <div className="options-grid">
+              {quiz.options.map((option) => (
+                <button 
+                  key={option} 
+                  onClick={() => handleOptionClick(option)}
+                  className="option-button"
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </>
+    )
+  );
+}
+
+// --- 子コンポーネント ---
+
+function StatsRadarChart({ stats }) {
+  // 1. グラフの「とくこう」と「すばやさ」の配置を逆にする
+  const data = {
+    labels: ['HP', 'こうげき', 'ぼうぎょ', 'すばやさ', 'とくぼう', 'とくこう'],
+    datasets: [
+      {
+        label: '種族値',
+        data: [
+          stats.hp,
+          stats.attack,
+          stats.defense,
+          stats.speed, // 順序を入れ替え
+          stats.sp_defense,
+          stats.sp_attack,
+        ],
+        backgroundColor: 'rgba(255, 99, 132, 0.2)',
+        borderColor: 'rgba(255, 99, 132, 1)',
+        borderWidth: 2,
+        pointBackgroundColor: 'rgba(255, 99, 132, 1)',
+      },
+    ],
+  };
+
+  const options = {
+    scales: {
+      r: {
+        angleLines: {
+          display: true,
+        },
+        suggestedMin: 0,
+        suggestedMax: 200, // 最大値に合わせて調整
+        ticks: {
+          stepSize: 40, // 2. メモリを40ごとに変更
+        },
+        pointLabels: {
+          // 各ラベルの下に数値を表示する
+          callback: function (label, index) {
+            const statValue = data.datasets[0].data[index];
+            return [label, `(${statValue})`]; // 配列で返すと改行される
+          },
+          font: {
+            size: 14,
+            // 2行目のフォントを太字にする
+            weight: (context) => (context.index === 1 ? 'bold' : 'normal'),
+          }
+        }
+      },
+    },
+    plugins: {
+      tooltip: {
+        enabled: true,
+      },
+    },
+    maintainAspectRatio: false,
+  };
+
+  return <div className="chart-container"><Radar data={data} options={options} /></div>;
+}
+
+function ScoreModal({ score, questionCount, onClose }) {
+  const accuracy = (score / questionCount) * 100;
+  return (
+    <div className="modal-backdrop">
+      <div className="modal-content">
+        <h2>結果発表</h2>
+        <p>{questionCount}問中 {score}問 正解！</p>
+        <p>正答率: {accuracy.toFixed(1)}%</p>
+        <button onClick={onClose} className="next-button">モードを選び直す</button>
+      </div>
     </div>
   );
+}
+
+function RegionSelector({ onSelect, stats }) {
+  const regions = [
+    { id: 'kanto', name: 'カントー' },
+    { id: 'johto', name: 'ジョウト' },
+    { id: 'hoenn', name: 'ホウエン' },
+    { id: 'sinnoh', name: 'シンオウ' },
+    { id: 'unova', name: 'イッシュ' },
+    { id: 'kalos', name: 'カロス' },
+    { id: 'alola', name: 'アローラ' },
+    { id: 'galar', name: 'ガラル' },
+    { id: 'paldea', name: 'パルデア' },
+  ];
+
+  const totalAccuracy = stats && stats.TotalQuestions > 0
+    ? ((stats.TotalCorrect / stats.TotalQuestions) * 100).toFixed(1)
+    : 'N/A';
+
+  const wrongAnswersCount = stats && stats.WrongAnswers ? JSON.parse(stats.WrongAnswers).length : 0;
+
+  return (
+    <div className="region-selector">
+      <div className="user-stats-box">
+        <h3>累計成績</h3>
+        <p>正答率: {totalAccuracy} %</p>
+        <p>（{stats?.TotalCorrect || 0} / {stats?.TotalQuestions || 0} 問）</p>
+      </div>
+
+      <h2>モードを選択してください</h2>
+      {wrongAnswersCount > 0 && (
+        <button 
+          onClick={() => onSelect('kanto', true)} // regionはダミー
+          className="option-button retry-button"
+        >
+          間違えた問題に再挑戦 ({wrongAnswersCount}問)
+        </button>
+      )}
+
+      <h3>地方から選ぶ</h3>
+      <div className="options-grid">
+        {regions.map(region => (
+          <button 
+            key={region.id} 
+            onClick={() => onSelect(region.id, false)}
+            className="option-button"
+          >
+            {region.name}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LoginPage() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const { login } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    try {
+      await login(username, password);
+      navigate('/quiz');
+    } catch (err) {
+      setError('ログインに失敗しました。ユーザー名かパスワードを確認してください。');
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="auth-form">
+      <h2>ログイン</h2>
+      {error && <p className="error-message">{error}</p>}
+      <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="ユーザー名" required />
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="パスワード" required />
+      <button type="submit">ログイン</button>
+      <p>アカウントがありませんか？ <a href="/register">新規登録</a></p>
+    </form>
+  );
+}
+
+function RegisterPage() {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const { register } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError('');
+    const validPattern = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z\d]{8,}$/;
+    if (!validPattern.test(username) || !validPattern.test(password)) {
+      setError('ユーザー名とパスワードは、半角英数字を両方含む8文字以上で設定してください。');
+      return;
+    }
+    try {
+      await register(username, password);
+      navigate('/login');
+    } catch (err) {
+      setError('このユーザー名は既に使用されています。');
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="auth-form">
+      <h2>新規登録</h2>
+      {error && <p className="error-message">{error}</p>}
+      <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="ユーザー名 (半角英数字)" required />
+      <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="パスワード (半角英数字)" required />
+      <button type="submit">登録</button>
+      <p>既にアカウントをお持ちですか？ <a href="/login">ログイン</a></p>
+    </form>
+  );
+}
+
+function AppHeader() {
+  const { user, logout } = useContext(AuthContext);
+  return (
+    <header className="App-header">
+      <h1>種族値クイズ</h1>
+      {user && (
+        <div className="header-user-info">
+          <span>{user.username}</span>
+          <button onClick={logout}>ログアウト</button>
+        </div>
+      )}
+    </header>
+  );
+}
+
+function PrivateRoute({ children }) {
+  const { token } = useContext(AuthContext);
+  return token ? children : <Navigate to="/login" />;
 }
 
 export default App;
