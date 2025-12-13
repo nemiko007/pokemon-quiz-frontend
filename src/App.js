@@ -4,6 +4,7 @@ import {
   Routes,
   Route,
   Navigate,
+  Link,
   useNavigate,
 } from 'react-router-dom';
 import axios from 'axios';
@@ -454,6 +455,7 @@ function LoginPage() {
       <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="パスワード" required />
       <button type="submit">ログイン</button>
       <p>アカウントがありませんか？ <a href="/register">新規登録</a></p>
+      <p>アカウントがありませんか？ <Link to="/register">新規登録</Link></p>
     </form>
   );
 }
@@ -489,6 +491,7 @@ function RegisterPage() {
       <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="パスワード (半角英数字)" required />
       <button type="submit">登録</button>
       <p>既にアカウントをお持ちですか？ <a href="/login">ログイン</a></p>
+      <p>既にアカウントをお持ちですか？ <Link to="/login">ログイン</Link></p>
     </form>
   );
 }
