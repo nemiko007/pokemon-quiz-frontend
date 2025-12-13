@@ -121,7 +121,6 @@ function QuizPage() {
   const [questionCount, setQuestionCount] = useState(0);
   const [showScoreModal, setShowScoreModal] = useState(false);
   const [userStats, setUserStats] = useState(null);
-  const [retryQuizList, setRetryQuizList] = useState([]); // 再挑戦モード用の問題リスト
 
   // --- 関数の定義 ---
 
@@ -132,16 +131,8 @@ function QuizPage() {
     setError('');
     setResult(null);
     try {
-      let response;
-      if (retry && retryQuizList.length > 0) {
-        // 再挑戦リストから次の問題を取得
-        const nextPokemonId = retryQuizList[0];
-        // この実装ではAPIを叩いていますが、初回に全ポケモン情報を取得してフロントで完結させる方法もあります
-        response = await api.get(`/quiz?region=${region}&retry=true&pokemonId=${nextPokemonId}`);
-      } else {
-        // 通常のクイズ取得
-        response = await api.get(`/quiz?region=${region}&retry=${retry}`);
-      }
+      // 通常・リトライモード問わず、同じエンドポイントを叩く（サーバー側で分岐）
+      const response = await api.get(`/quiz?region=${region}&retry=${retry}`);
       setQuiz(response.data);
     } catch (err) {
       setError('クイズの読み込みに失敗しました。サーバーが起動しているか確認してください。');
@@ -164,10 +155,6 @@ function QuizPage() {
 
       if (response.data.isCorrect) {
         setScore(prevScore => prevScore + 1);
-        if (retryMode) {
-          // 正解したら再挑戦リストから削除
-          setRetryQuizList(prevList => prevList.filter(id => id !== quiz.id));
-        }
       }
       setQuestionCount(prevCount => prevCount + 1);
 
@@ -184,13 +171,14 @@ function QuizPage() {
 
   // 「間違えた問題」モードで全問正解したかチェックする
   useEffect(() => {
-    // retryModeがtrueで、userStatsが読み込まれ、かつretryQuizListが空になったらモード選択に戻る
+    // retryModeがtrueで、userStatsが読み込まれ、間違えた問題数が0になったらモード選択に戻る
     // questionCount > 0 を条件に加えることで、初期表示時に発火するのを防ぐ
-    if (retryMode && userStats && questionCount > 0 && retryQuizList.length === 0) {
+    const wrongAnswersCount = userStats && userStats.WrongAnswers ? JSON.parse(userStats.WrongAnswers).length : 0;
+    if (retryMode && userStats && questionCount > 0 && wrongAnswersCount === 0) {
       alert('おめでとうございます！間違えた問題をすべてクリアしました！');
       handleCloseModal();
     }
-  }, [userStats, retryMode]);
+  }, [userStats, retryMode, questionCount]);
 
   // スコアモーダルを閉じる処理
   const handleCloseModal = () => {
@@ -206,11 +194,6 @@ function QuizPage() {
   const handleRegionSelect = (region, retry) => {
     setSelectedRegion(region);
     setRetryMode(retry);
-    if (retry && userStats) {
-      // 間違えた問題のIDリストをシャッフルしてセット
-      const wrongIds = JSON.parse(userStats.WrongAnswers);
-      setRetryQuizList(wrongIds.sort(() => Math.random() - 0.5));
-    }
     fetchQuiz(region, retry);
   }
 
@@ -239,13 +222,15 @@ function QuizPage() {
 
   // --- レンダリング ---
 
+  const wrongAnswersCount = userStats && userStats.WrongAnswers ? JSON.parse(userStats.WrongAnswers).length : 0;
+
   return (
     !selectedRegion ? (
       <RegionSelector onSelect={handleRegionSelect} stats={userStats} />
     ) : (
       <>
       <div className="quiz-header">
-        <p className="question-counter">{retryMode ? `残り ${retryQuizList.length} 問` : `${questionCount + 1} 問目`}</p>
+        <p className="question-counter">{retryMode ? `残り ${wrongAnswersCount} 問` : `${questionCount + 1} 問目`}</p>
         <button onClick={handleCloseModal} className="interrupt-button">中断して戻る</button>
       </div>
 
@@ -308,6 +293,10 @@ function QuizPage() {
 
 // --- 子コンポーネント ---
 
+function TotalStatsDisplay({ total }) {
+  return <div className="total-stats">合計種族値: <strong>{total}</strong></div>;
+}
+
 function StatsRadarChart({ stats }) {
   // 1. グラフの「とくこう」と「すばやさ」の配置を逆にする
   const data = {
@@ -350,9 +339,8 @@ function StatsRadarChart({ stats }) {
           },
           font: {
             size: 14,
-            // 2行目のフォントを太字にする
-            weight: (context) => (context.index === 1 ? 'bold' : 'normal'),
-          }
+            weight: 'bold', // ラベル全体を太字に
+          },
         }
       },
     },
@@ -364,7 +352,14 @@ function StatsRadarChart({ stats }) {
     maintainAspectRatio: false,
   };
 
-  return <div className="chart-container"><Radar data={data} options={options} /></div>;
+  const totalStats = stats.hp + stats.attack + stats.defense + stats.sp_attack + stats.sp_defense + stats.speed;
+
+  return (
+    <div className="chart-wrapper">
+      <div className="chart-container"><Radar data={data} options={options} /></div>
+      <TotalStatsDisplay total={totalStats} />
+    </div>
+  );
 }
 
 function ScoreModal({ score, questionCount, onClose }) {
