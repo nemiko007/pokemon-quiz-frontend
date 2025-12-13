@@ -27,7 +27,7 @@ ChartJS.register(
 );
 
 // バックエンドAPIのURL
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
+const API_URL = process.env.REACT_APP_API_URL;
 
 // 認証コンテキスト
 const AuthContext = createContext(null);
@@ -207,11 +207,6 @@ function QuizPage() {
     };
     getStats();
   }, [questionCount, api]);
-
-  // コンポーネントが最初にマウントされたときにクイズを取得する
-  useEffect(() => {
-    // 地方が選択されたらクイズを取得するロジックに変更したため、ここは空でOK
-  }, []); 
 
   // 10問ごとに正答率を表示する
   useEffect(() => {
