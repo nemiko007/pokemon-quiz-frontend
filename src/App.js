@@ -101,8 +101,8 @@ function App() {
             <Routes>
               <Route path="/login" element={<LoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
-              <Route path="/quiz" element={<PrivateRoute><QuizPage /></PrivateRoute>} />
-              <Route path="*" element={<Navigate to={auth.token ? "/quiz" : "/login"} />} />
+              <Route path="/quiz" element={<QuizPage />} />
+              <Route path="*" element={<Navigate to="/quiz" />} />
             </Routes>
           </main>
         </div>
@@ -112,7 +112,7 @@ function App() {
 }
 
 function QuizPage() {
-  const { api } = useContext(AuthContext);
+  const { api, token } = useContext(AuthContext);
   // --- Stateの定義 ---
   const [quiz, setQuiz] = useState(null); // クイズデータ (id, stats, options)
   const [isLoading, setIsLoading] = useState(true); // ローディング状態
@@ -120,6 +120,7 @@ function QuizPage() {
   const [result, setResult] = useState(null); // 答え合わせの結果
   const [selectedRegion, setSelectedRegion] = useState(null);
   const [retryMode, setRetryMode] = useState(false); // 間違えた問題オプション
+  const [difficulty, setDifficulty] = useState('normal'); // 難易度 (easy, normal, hard)
 
   // スコア管理用のState
   const [score, setScore] = useState(0);
@@ -139,6 +140,8 @@ function QuizPage() {
       // 通常・リトライモード問わず、同じエンドポイントを叩く（サーバー側で分岐）
       const response = await api.get(`/quiz?region=${region}&retry=${retry}`);
       setQuiz(response.data);
+      // デバッグ用に取得したクイズ情報をコンソールに出力
+      console.log("Fetched quiz data:", response.data);
     } catch (err) {
       setError('クイズの読み込みに失敗しました。サーバーが起動しているか確認してください。');
       console.error(err);
@@ -196,8 +199,9 @@ function QuizPage() {
   }
 
   // 地方が選択されたときの処理
-  const handleRegionSelect = (region, retry) => {
+  const handleRegionSelect = (region, retry, diff) => {
     setSelectedRegion(region);
+    setDifficulty(diff);
     setRetryMode(retry);
     fetchQuiz(region, retry);
   }
@@ -206,12 +210,14 @@ function QuizPage() {
 
   // ユーザー統計情報を取得
   useEffect(() => {
-    const getStats = async () => {
-      const res = await api.get('/stats');
-      setUserStats(res.data);
-    };
-    getStats();
-  }, [questionCount, api]);
+    if (token) { // ログインしている場合のみ統計情報を取得
+      const getStats = async () => {
+        const res = await api.get('/stats');
+        setUserStats(res.data);
+      };
+      getStats();
+    }
+  }, [questionCount, api, token]);
 
   // 10問ごとに正答率を表示する
   useEffect(() => {
@@ -225,8 +231,8 @@ function QuizPage() {
   const wrongAnswersCount = userStats && userStats.WrongAnswers ? JSON.parse(userStats.WrongAnswers).length : 0;
 
   return (
-    !selectedRegion ? (
-      <RegionSelector onSelect={handleRegionSelect} stats={userStats} />
+    !selectedRegion || !quiz ? (
+      <RegionSelector onSelect={handleRegionSelect} stats={userStats} selectedDifficulty={difficulty} />
     ) : (
       <>
       <div className="quiz-header">
@@ -249,6 +255,7 @@ function QuizPage() {
         <>
           {/* 種族値グラフ表示エリア */}
           <StatsRadarChart stats={quiz.stats} />
+          <HintDisplay quiz={quiz} difficulty={difficulty} />
 
           {/* 結果表示エリア */}
           {result && (
@@ -261,11 +268,13 @@ function QuizPage() {
                 </p>
               )}
               <h3>{result.correctPokemon.name}</h3>
-              <img 
-                src={result.correctPokemon.imageUrl} 
-                alt={result.correctPokemon.name} 
-                className="pokemon-image"
-              />
+              {result.correctPokemon.imageUrl && (
+                <img
+                  src={result.correctPokemon.imageUrl}
+                  alt={result.correctPokemon.name}
+                  className="pokemon-image"
+                />
+              )}
               <button onClick={handleNextQuiz} className="next-button">次の問題へ</button>
             </div>
           )}
@@ -291,6 +300,39 @@ function QuizPage() {
   );
 }
 
+function HintDisplay({ quiz, difficulty }) {
+  // useMemoをコンポーネントのトップレベルに移動
+  const selectedHint = useMemo(() => {
+    // 難易度'hard'の場合はヒントを返さない
+    if (difficulty === 'hard') {
+      return [];
+    }
+
+    // hints配列の生成をuseMemo内に移動
+    const hints = [
+      `高さ: ${quiz.height ? quiz.height.toFixed(1) : 0} m`,
+      `重さ: ${quiz.weight ? quiz.weight.toFixed(1) : 0} kg`,
+    ];
+
+    if (difficulty === 'easy') {
+      return hints; // かんたんモードでは全てのヒントを表示
+    }
+    // ふつうモードではランダムに1つ
+    return [hints[quiz.id % hints.length]]; // ポケモンIDに基づいて決定的に選択
+  }, [quiz.id, quiz.height, quiz.weight, difficulty]);
+
+  if (difficulty === 'hard') {
+    return null; // むずかしいモードではヒントなし
+  }
+
+  return (
+    <div className="hint-area">
+      {selectedHint.map(hint => (
+        <p key={hint}>{hint}</p>
+      ))}
+    </div>
+  );
+}
 // --- 子コンポーネント ---
 
 function TotalStatsDisplay({ total }) {
@@ -376,7 +418,7 @@ function ScoreModal({ score, questionCount, onClose }) {
   );
 }
 
-function RegionSelector({ onSelect, stats }) {
+function RegionSelector({ onSelect, stats, selectedDifficulty }) {
   const regions = [
     { id: 'kanto', name: 'カントー' },
     { id: 'johto', name: 'ジョウト' },
@@ -387,6 +429,15 @@ function RegionSelector({ onSelect, stats }) {
     { id: 'alola', name: 'アローラ' },
     { id: 'galar', name: 'ガラル' },
     { id: 'paldea', name: 'パルデア' },
+    { id: 'regional', name: 'リージョン' },
+    { id: 'mega', name: 'メガシンカ' },
+    { id: 'gmax', name: 'ダイマックス' },
+  ];
+
+  const difficulties = [
+    { id: 'easy', name: 'かんたん' },
+    { id: 'normal', name: 'ふつう' },
+    { id: 'hard', name: 'むずかしい' },
   ];
 
   const totalAccuracy = stats && stats.TotalQuestions > 0
@@ -394,31 +445,52 @@ function RegionSelector({ onSelect, stats }) {
     : 'N/A';
 
   const wrongAnswersCount = stats && stats.WrongAnswers ? JSON.parse(stats.WrongAnswers).length : 0;
+  const { user } = useContext(AuthContext);
 
   return (
     <div className="region-selector">
-      <div className="user-stats-box">
-        <h3>累計成績</h3>
-        <p>正答率: {totalAccuracy} %</p>
-        <p>（{stats?.TotalCorrect || 0} / {stats?.TotalQuestions || 0} 問）</p>
+      {user ? (
+        <>
+          <div className="user-stats-box">
+            <h3>累計成績</h3>
+            <p>正答率: {totalAccuracy} %</p>
+            <p>（{stats?.TotalCorrect || 0} / {stats?.TotalQuestions || 0} 問）</p>
+          </div>
+          {wrongAnswersCount > 0 && (
+            <button
+              onClick={() => onSelect('retry', true, selectedDifficulty)}
+              className="option-button retry-button"
+            >
+              間違えた問題に再挑戦 ({wrongAnswersCount}問)
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="user-stats-box">
+          <p>ログインすると、成績を記録したり、間違えた問題に再挑戦できます。</p>
+          <Link to="/login">ログインはこちら</Link>
+        </div>
+      )}
+
+      <h2>難易度を選択してください</h2>
+      <div className="difficulty-selector">
+        {difficulties.map(diff => (
+          <button
+            key={diff.id}
+            onClick={() => onSelect(null, false, diff.id)} // 難易度だけ変更
+            className={`difficulty-button ${selectedDifficulty === diff.id ? 'selected' : ''}`}
+          >
+            {diff.name}
+          </button>
+        ))}
       </div>
 
       <h2>モードを選択してください</h2>
-      {wrongAnswersCount > 0 && (
-        <button 
-          onClick={() => onSelect('kanto', true)} // regionはダミー
-          className="option-button retry-button"
-        >
-          間違えた問題に再挑戦 ({wrongAnswersCount}問)
-        </button>
-      )}
-
-      <h3>地方から選ぶ</h3>
       <div className="options-grid">
         {regions.map(region => (
           <button 
             key={region.id} 
-            onClick={() => onSelect(region.id, false)}
+            onClick={() => onSelect(region.id, false, selectedDifficulty)}
             className="option-button"
           >
             {region.name}
@@ -507,11 +579,6 @@ function AppHeader() {
       )}
     </header>
   );
-}
-
-function PrivateRoute({ children }) {
-  const { token } = useContext(AuthContext);
-  return token ? children : <Navigate to="/login" />;
 }
 
 export default App;
