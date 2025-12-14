@@ -455,6 +455,21 @@ function RegionSelector({ onSelect, stats, selectedDifficulty }) {
             <h3>累計成績</h3>
             <p>正答率: {totalAccuracy} %</p>
             <p>（{stats?.TotalCorrect || 0} / {stats?.TotalQuestions || 0} 問）</p>
+            {stats?.RegionalStats && Object.keys(stats.RegionalStats).length > 0 && (
+              <div className="regional-stats">
+                <h4>地方別正答率</h4>
+                <ul style={{ listStyleType: 'none', padding: 0 }}>
+                  {Object.entries(stats.RegionalStats)
+                    .sort(([regionA], [regionB]) => regionA.localeCompare(regionB))
+                    .map(([region, data]) => (
+                    <li key={region}>
+                      {regions.find(r => r.id === region)?.name || region}: {data.total > 0 ? ((data.correct / data.total) * 100).toFixed(1) : 0}%
+                      <span className="regional-stats-counts"> ({data.correct || 0}/{data.total || 0})</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
           {wrongAnswersCount > 0 && (
             <button
