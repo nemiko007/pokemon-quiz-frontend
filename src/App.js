@@ -16,15 +16,19 @@ import {
   LineElement,
   Filler,
   Tooltip,
+  ArcElement,
+  Legend,
 } from 'chart.js';
-import { Radar } from 'react-chartjs-2';
+import { Radar, Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(
   RadialLinearScale,
   PointElement,
   LineElement,
   Filler,
-  Tooltip
+  Tooltip,
+  ArcElement,
+  Legend
 );
 
 // バックエンドAPIのURL
@@ -440,10 +444,6 @@ function RegionSelector({ onSelect, stats, selectedDifficulty }) {
     { id: 'hard', name: 'むずかしい' },
   ];
 
-  const totalAccuracy = stats && stats.TotalQuestions > 0
-    ? ((stats.TotalCorrect / stats.TotalQuestions) * 100).toFixed(1)
-    : 'N/A';
-
   const wrongAnswersCount = stats && stats.WrongAnswers ? JSON.parse(stats.WrongAnswers).length : 0;
   const { user } = useContext(AuthContext);
 
@@ -453,23 +453,7 @@ function RegionSelector({ onSelect, stats, selectedDifficulty }) {
         <>
           <div className="user-stats-box">
             <h3>累計成績</h3>
-            <p>正答率: {totalAccuracy} %</p>
-            <p>（{stats?.TotalCorrect || 0} / {stats?.TotalQuestions || 0} 問）</p>
-            {stats?.RegionalStats && Object.keys(stats.RegionalStats).length > 0 && (
-              <div className="regional-stats">
-                <h4>地方別正答率</h4>
-                <ul style={{ listStyleType: 'none', padding: 0 }}>
-                  {Object.entries(stats.RegionalStats)
-                    .sort(([regionA], [regionB]) => regionA.localeCompare(regionB))
-                    .map(([region, data]) => (
-                    <li key={region}>
-                      {regions.find(r => r.id === region)?.name || region}: {data.total > 0 ? ((data.correct / data.total) * 100).toFixed(1) : 0}%
-                      <span className="regional-stats-counts"> ({data.correct || 0}/{data.total || 0})</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
+            <StatsDoughnutChart stats={stats} regions={regions} />
           </div>
           {wrongAnswersCount > 0 && (
             <button
@@ -512,6 +496,113 @@ function RegionSelector({ onSelect, stats, selectedDifficulty }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+function StatsDoughnutChart({ stats, regions }) {
+  const [showRegional, setShowRegional] = useState(false);
+
+  const totalCorrect = stats?.TotalCorrect || 0;
+  const totalQuestions = stats?.TotalQuestions || 0;
+  const totalIncorrect = totalQuestions - totalCorrect;
+
+  const totalChartData = {
+    labels: ['正解', '不正解'],
+    datasets: [
+      {
+        data: [totalCorrect, totalIncorrect > 0 ? totalIncorrect : 0],
+        backgroundColor: ['#4CAF50', '#F44336'],
+        hoverBackgroundColor: ['#66BB6A', '#EF5350'],
+      },
+    ],
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        position: 'bottom',
+      },
+      tooltip: {
+        callbacks: {
+          label: function (context) {
+            let label = context.label || '';
+            if (label) {
+              label += ': ';
+            }
+            if (context.parsed !== null) {
+              label += `${context.parsed}問`;
+            }
+            return label;
+          },
+        },
+      },
+    },
+  };
+
+  return (
+    <div>
+      <div className="chart-container-doughnut">
+        <Doughnut data={totalChartData} options={chartOptions} />
+      </div>
+      <p>正答率: {totalQuestions > 0 ? ((totalCorrect / totalQuestions) * 100).toFixed(1) : 'N/A'} %</p>
+      <p>（{totalCorrect} / {totalQuestions} 問）</p>
+
+      <button onClick={() => setShowRegional(!showRegional)} className="toggle-stats-button">
+        {showRegional ? '隠す' : '地方別正答率を表示'}
+      </button>
+
+      {showRegional && (
+        <div className="regional-stats">
+          <div className="regional-charts-grid">
+            {regions
+              .map(regionInfo => {
+                const regionData = stats?.RegionalStats?.[regionInfo.id] || { correct: 0, total: 0 };
+                return { ...regionInfo, ...regionData };
+              })
+              .map(region => (
+                <RegionalStatChart
+                  key={region.id}
+                  regionName={region.name}
+                  correct={region.correct}
+                  total={region.total}
+                />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RegionalStatChart({ regionName, correct, total }) {
+  const incorrect = total - correct;
+  const accuracy = total > 0 ? ((correct / total) * 100).toFixed(1) : 0;
+
+  const chartData = {
+    labels: ['正解', '不正解'],
+    datasets: [
+      {
+        data: [correct, incorrect > 0 ? incorrect : 0],
+        backgroundColor: ['#4CAF50', '#F44336'],
+        borderWidth: 0,
+      },
+    ],
+  };
+
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: true,
+    plugins: { legend: { display: false } },
+  };
+
+  return (
+    <div className="regional-chart-container">
+      <Doughnut data={chartData} options={chartOptions} />
+      <p className="regional-chart-label">{regionName}</p>
+      <p className="regional-chart-accuracy">{accuracy}% ({correct}/{total})</p>
     </div>
   );
 }
