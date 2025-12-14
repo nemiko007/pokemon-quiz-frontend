@@ -1,5 +1,12 @@
 # /home/nemiko007/pokequiz/pokemon-quiz-frontend/netlify.toml
 
+# キャッシュ制御
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # 機密情報を含む可能性があるため、HTMLページのキャッシュを無効化
+    Cache-Control = "private, no-cache, no-store, must-revalidate"
+
 # 全てのページに適用するヘッダー
 [[headers]]
   for = "/*"
