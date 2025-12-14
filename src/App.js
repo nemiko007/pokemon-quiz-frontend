@@ -424,6 +424,7 @@ function ScoreModal({ score, questionCount, onClose }) {
 
 function RegionSelector({ onSelect, stats, selectedDifficulty }) {
   const regions = [
+    { id: 'all', name: 'すべてのポケモン' },
     { id: 'kanto', name: 'カントー' },
     { id: 'johto', name: 'ジョウト' },
     { id: 'hoenn', name: 'ホウエン' },
@@ -490,7 +491,7 @@ function RegionSelector({ onSelect, stats, selectedDifficulty }) {
           <button 
             key={region.id} 
             onClick={() => onSelect(region.id, false, selectedDifficulty)}
-            className="option-button"
+            className={`option-button ${region.id === 'all' ? 'all-pokemon-button' : ''}`}
           >
             {region.name}
           </button>

@@ -125,6 +125,11 @@
    background-color: var(--light-gray);
    border-color: var(--accent-color);
  }
+
+.all-pokemon-button {
+  /* 2カラム分の幅を取る */
+  grid-column: 1 / -1;
+}
  
  .result-area {
    margin-top: 20px;
